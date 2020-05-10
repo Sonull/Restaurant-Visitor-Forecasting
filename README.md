@@ -14,3 +14,10 @@ We will use reservation and visitation data to predict the total number of visit
  
 ## Tools and Techniques
 We will use RStudio for statistical inference,graphics and model creation. Also, for the time series forecasting techniques we wish to implement ARIMA, FB Prophet, Holt-Winters and timetk algorithms. Also, we might look into additional techniques as we progress through the project.
+
+## Team Members
+* Jennifer Siwu
+* Sonal Mendiratta
+* Manodhar Allu
+* Aneesh Kalaga
+* Yeji Lee
