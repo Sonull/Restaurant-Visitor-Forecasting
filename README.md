@@ -21,3 +21,6 @@ We will use RStudio for statistical inference,graphics and model creation. Also,
 * Manodhar Allu
 * Aneesh Kalaga
 * Yeji Lee
+
+## Source
+https://www.kaggle.com/c/recruit-restaurant-visitor-forecasting/data
