@@ -1,0 +1,471 @@
+---
+title: "01_EDA"
+author: "Sonal Mendiratta"
+date: "5/14/2020"
+output: html_document
+---
+
+# Objective:
+* Understanding the data
+* Visualization
+
+```{r include = FALSE}
+setwd("/Users/sonal/Desktop/Desktop_v2/MSBA/COURSES/QUARTER4/PredictiveAnalytics/Project")
+```
+
+```{r include = FALSE}
+library(lattice)
+library(ggplot2)
+library(dplyr)  
+library("psych")
+library(ggcorrplot)
+library(leaps)
+library(corrplot)
+library(glmnet)
+library(boot)
+library(glmnet)
+library(fpp2)
+library(lubridate)
+library(sqldf)
+options(scipen=999)
+library(treemap)
+library(leaflet)
+library(forecast)
+```
+
+
+#  Understanding the data
+
+### 1.air_reserve 
+
+* air_store_id - the restaurant's id in the air system
+* visit_datetime - the time of the reservation
+* reserve_datetime - the time the reservation was made
+* reserve_visitors - the number of visitors for that reservation
+
+```{r}
+air_reserve <- data.frame(read.csv("air_reserve.csv"))
+head(air_reserve)
+dim(air_reserve)
+names(air_reserve)
+air_reserve %>% distinct(air_store_id) %>% nrow()
+```
+
+314 unique stores in reservation data
+
+### 2. air_store_info
+Information around air restaurants
+
+```{r}
+air_store_info <- data.frame(read.csv("air_store_info.csv"))
+head(air_store_info)
+dim(air_store_info)
+air_store_info %>% distinct(air_store_id) %>% nrow()
+```
+829 unique stores 
+
+
+### 3. air_visit_data
+Visit data for air restaurants
+
+```{r}
+air_visit_data  <- data.frame(read.csv("air_visit_data.csv"))
+head(air_visit_data)
+dim(air_visit_data)
+names(air_visit_data)
+air_visit_data %>% distinct(air_store_id) %>% nrow()
+```
+829 unique stores 
+
+### 4. date_info
+calendar date information - day of the week and holiday
+```{r}
+date_info <- data.frame(read.csv("date_info.csv"))
+head(date_info)
+dim(date_info)
+str(date_info)
+date_info %>% distinct(calendar_date) %>% nrow()
+```
+ 517 unique dates
+
+### 5. hpg_reserve
+details of reservations made in the hpg system
+```{r}
+hpg_reserve <- data.frame(read.csv("hpg_reserve.csv"))
+head(hpg_reserve)
+dim(hpg_reserve)
+hpg_reserve %>% distinct(hpg_store_id) %>% nrow()
+```
+13325 distinct stores 
+
+###6. hpg_store_info
+information around hpg restaurants
+```{r}
+hpg_store_info <- data.frame(read.csv("hpg_store_info.csv"))
+head(hpg_store_info)
+dim(hpg_store_info)
+hpg_store_info %>% distinct(hpg_store_id) %>% nrow()
+```
+4690 unique stores
+
+**Store information is for 892 unique Air stores and 13325 unique hpg stores**
+
+###7. store_id_relation
+relation between hpg and air store ids
+```{r}
+store_id_relation <- data.frame(read.csv("store_id_relation.csv"))
+head(store_id_relation)
+dim(store_id_relation)
+store_id_relation %>% distinct(air_store_id) %>% nrow()
+```
+relation between hpg id and air id for 150 stores
+
+###8. sample_submission
+
+* final data - need visitor count for each restaurant
+* dependent variable -  Visitors
+* we are not predicting number of visits in a day but number of visitors in a day!
+
+```{r}
+sample_submission <- data.frame(read.csv("sample_submission.csv"))
+head(sample_submission)
+dim(sample_submission)
+```
+
+# Visualization
+
+* distribution of restaurancts by genre
+* distribution of restaurants by area
+* distribution of visits by holidays
+* distribution of visits during the week
+* distribution of visits overall
+
+## Data Pre-processing
+
+```{r}
+# Converting date from factor to date format in all datasets
+
+# air_visit_data
+air_visit_data$visit_date <- ymd(air_visit_data$visit_date)
+head(air_visit_data)
+
+# air_reserve
+air_reserve$reserve_datetime <- ymd_hms(air_reserve$reserve_datetime)
+air_reserve$visit_datetime <- ymd_hms(air_reserve$visit_datetime)
+
+# hpg_reserve
+hpg_reserve$reserve_datetime <- ymd_hms(hpg_reserve$reserve_datetime)
+hpg_reserve$visit_datetime <- ymd_hms(hpg_reserve$visit_datetime)
+head(hpg_reserve)
+
+# date_info
+date_info$calendar_date <- ymd(date_info$calendar_date)
+date_info$day_of_week <- weekdays(date_info$calendar_date)
+```
+
+## AIR Restaurants
+
+```{r}
+air_visit_store <- sqldf("select a.*, 
+                                 b.air_genre_name,
+                                 b.air_area_name,
+                                 b.latitude,
+                                 b.longitude,
+                                 c.day_of_week,
+                                 c.holiday_flg
+                         from air_visit_data a
+                         left join air_store_info b
+                         on a.air_store_id = b.air_store_id
+                         left join date_info c
+                         on a.visit_date = c.calendar_date")
+```
+
+Using air_visit_data here as it as data for 829 unique stores 
+
+## number of restaurants by genre
+```{r}
+air_visit_store %>%                    
+  group_by(air_genre_name) %>%         
+  summarize(stores = n_distinct(air_store_id)) %>%
+  ggplot(aes(x = air_genre_name,  y = stores, fill = air_genre_name)) +
+  geom_col() +
+  coord_flip() +
+  theme(legend.position = "none") +
+  labs(x = "Genre", y = "Number of air restaurants")
+```
+
+Majority of the restaurants are of Izakya and Cafe/Sweets genre
+
+## number of restaurants by area
+```{r}
+air_visit_store %>%                    
+  group_by(air_area_name) %>%         
+  summarize(stores = n_distinct(air_store_id)) %>%
+  treemap(index="air_area_name",
+        vSize="stores",
+        type="index")
+```
+
+Tip 3 populated areas are: Fukuo.., Tokyo.. Tokyo..
+
+## Day of the week
+```{r}
+air_visit_store %>%
+  group_by(day_of_week) %>%
+  summarise(visits = sum(visitors)) %>%
+  ggplot(aes(day_of_week, visits, fill = day_of_week)) +
+  geom_col() +
+  theme(legend.position = "none") +
+  labs(x = "Day", y = "Total number of visitors") + 
+  ggtitle("Distribution of Visits by the day of the week")
+```
+ 
+ Highest number of visits are on Saturday followed by Friday
+
+##  Genre
+```{r}
+air_visit_store %>%
+  group_by(air_genre_name) %>%
+  summarise(visits = sum(visitors)) %>%
+  ggplot(aes(air_genre_name, visits, fill = air_genre_name)) +
+  geom_col() +
+  theme(legend.position = "none") +
+  labs(x = "Genre", y = "Total number of visitors") + 
+  ggtitle("Distribution of Visits by Genre")+
+  coord_flip()
+```
+
+Majority of the visits are also in the same top 2 genres
+
+## Holidays
+```{r}
+test <- air_visit_store
+test$holiday_flg <- as.factor(test$holiday_flg)
+ggplot(test,aes(x = holiday_flg,y = visitors, fill = holiday_flg, group = holiday_flg))+
+  geom_violin(trim=FALSE, alpha = 0.7) +
+  theme(legend.position="none")+
+  ggtitle("Distribution of Visits by Holidays")+
+  theme(plot.title=element_text(hjust=0.5))+
+  geom_boxplot(width=0.1,fill="white")+
+  scale_fill_manual(values=c("#F2359D", "#034C8C")) +
+  xlab("Holiday")
+```
+
+Interestingly, holidays do not really have an impact on the visitors.
+
+## Holidays on weekdays 
+
+```{r}
+test <- air_visit_store
+test$holiday_flg <- as.factor(test$holiday_flg)
+test %>%
+  group_by(day_of_week, holiday_flg) %>%
+  summarise(mean_visitors = mean(visitors)) %>%
+  ggplot(aes(x=day_of_week, y=mean_visitors, color=holiday_flg)) + 
+    geom_point(size=4) +
+  xlab("Day")+
+  ylab("Average number of visitors")+
+  theme_light()
+```
+ More number of visits on a weekday if it is a holiday
+
+## Time series
+
+```{r}
+air_vis <- subset(air_visit_store, select = c("visit_date","visitors"))
+air_vis1 <- air_vis %>%                    
+  group_by(visit_date) %>%         
+  summarize(visits = sum(visitors)) 
+
+air_vis_ts <- ts(air_vis1[,2], frequency = 7)
+autoplot(air_vis_ts) + xlab("Date") + ylab("Visitors") + ggtitle("Visitors throughout the time frame")
+```
+
+```{r}
+auto <- auto.arima(air_vis_ts)
+summary(auto)
+autoplot(auto)
+```
+
+```{r}
+air_visit_store1 <- sqldf("select distinct air_store_id,
+                      longitude,latitude ,air_genre_name
+                      from air_visit_store
+                          ")
+leaflet(air_visit_store1) %>%
+  addTiles() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  addMarkers(~longitude, ~latitude,
+             popup = ~air_store_id, label = ~air_genre_name,
+             clusterOptions = markerClusterOptions())
+```
+
+## HPG Restaurants
+
+```{r}
+head(hpg_reserve)
+head(hpg_store_info)
+```
+
+
+```{r}
+#converting the datetime to a date so that i can merge with calendar date
+hpg_reserve$visit_date <- as.Date(hpg_reserve$visit_datetime)
+```
+
+
+```{r}
+hpg_visit_store <- sqldf("select a.*, 
+                                 hpg_genre_name,
+                                 hpg_area_name,
+                                 b.latitude,
+                                 b.longitude,
+                                 c.day_of_week,
+                                 c.holiday_flg
+                         from hpg_reserve a
+                         left join hpg_store_info b
+                         on a.hpg_store_id = b.hpg_store_id
+                         left join date_info c
+                on  a.visit_date = c.calendar_date")
+```
+
+
+## number of restaurants by genre - had to remove NAs while plotting as some restraurants do not have the information
+```{r}
+hpg_visit_store %>%  
+   filter(!is.na(hpg_genre_name)) %>%
+  group_by(hpg_genre_name) %>%         
+  summarize(stores = n_distinct(hpg_store_id)) %>%
+  ggplot(aes(x = hpg_genre_name,  y = stores, fill = hpg_genre_name)) +
+  geom_col() +
+  coord_flip() +
+  theme(legend.position = "none") +
+  labs(x = "Genre", y = "Number of hpg restaurants")
+```
+
+International cuisine is second most common!
+
+## number of restaurants by area
+```{r}
+hpg_visit_store %>%                    
+  group_by(hpg_area_name) %>%         
+  summarize(stores = n_distinct(hpg_store_id)) %>%
+  treemap(index="hpg_area_name",
+        vSize="stores",
+        type="index")
+```
+
+```{r}
+head(hpg_visit_store)
+```
+
+## Day of the week
+```{r}
+hpg_visit_store %>%
+  group_by(day_of_week) %>%
+  summarise(visits = sum(reserve_visitors)) %>%
+  ggplot(aes(day_of_week, visits, fill = day_of_week)) +
+  geom_col() +
+  theme(legend.position = "none") +
+  labs(x = "Day", y = "Total number of visitors") + 
+  ggtitle("Distribution of Visits by the day of the week")
+```
+
+HPG restaurants are more popular on Friday instead.
+
+##number of visits by genre - had to remove NAs while plotting as some restraurants do not have the information
+```{r}
+hpg_visit_store %>%
+     filter(!is.na(hpg_genre_name)) %>%
+  group_by(hpg_genre_name) %>%
+  summarise(visits = sum(reserve_visitors)) %>%
+  ggplot(aes(hpg_genre_name, visits, fill = hpg_genre_name)) +
+  geom_col() +
+  theme(legend.position = "none") +
+  labs(x = "Genre", y = "Total number of visitors") + 
+  ggtitle("Distribution of Visits by Genre")+
+  coord_flip()
+```
+
+Japanese style and International Cuisine.
+
+## Holidays
+```{r}
+test <- hpg_visit_store
+test$holiday_flg <- as.factor(test$holiday_flg)
+ggplot(test,aes(x = holiday_flg,y = reserve_visitors, fill = holiday_flg, group = holiday_flg))+
+  geom_violin(trim=FALSE, alpha = 0.7) +
+  theme(legend.position="none")+
+  ggtitle("Distribution of Visits by Holidays")+
+  theme(plot.title=element_text(hjust=0.5))+
+  geom_boxplot(width=0.1,fill="white")+
+  scale_fill_manual(values=c("#F2359D", "#034C8C")) +
+  xlab("Holiday")
+```
+
+## Maybe mean visitors is better for visualization
+
+```{r}
+test <- hpg_visit_store
+test$holiday_flg <- as.factor(test$holiday_flg)
+test %>%
+  group_by( holiday_flg) %>%
+  summarise(mean_visitors = mean(reserve_visitors)) %>%
+  ggplot(aes(x=holiday_flg, y=mean_visitors, color=holiday_flg)) + 
+    geom_point(size=4) +
+  xlab("Holiday")+
+  ylab("Average number of visitors")+
+  theme_light()
+```
+
+On an average, visits are more on a non holiday than a holiday
+## Holidays on weekdays 
+
+```{r}
+test <- hpg_visit_store
+test$holiday_flg <- as.factor(test$holiday_flg)
+test %>%
+  group_by(day_of_week, holiday_flg) %>%
+  summarise(mean_visitors = mean(reserve_visitors)) %>%
+  ggplot(aes(x=day_of_week, y=mean_visitors, color=holiday_flg)) + 
+    geom_point(size=4) +
+  xlab("Day")+
+  ylab("Average number of visitors")+
+  theme_light()
+```
+
+Unless holiday is on weekday..
+
+
+```{r}
+##R studio crases when I run this
+# hpg_visit_store1 <-
+#   hpg_visit_store %>%
+# filter(!is.na(hpg_genre_name))
+# 
+# leaflet(hpg_visit_store1) %>%
+#   addTiles() %>%
+#   addProviderTiles("CartoDB.Positron") %>%
+#   addMarkers(~longitude, ~latitude,
+#              popup = ~hpg_store_id, label = ~hpg_genre_name,
+#              clusterOptions = markerClusterOptions())
+```
+
+## Time series
+
+```{r}
+hpg_vis <- subset(hpg_visit_store, select = c("visit_date","reserve_visitors"))
+hpg_vis1 <- hpg_vis %>%                    
+  group_by(visit_date) %>%         
+  summarize(visits = sum(reserve_visitors)) 
+
+hpg_vis_ts <- ts(hpg_vis1[,2], frequency = 7)
+autoplot(hpg_vis_ts) + xlab("Date") + ylab("Visitors") + ggtitle("Visitors throughout the time frame")
+```
+
+```{r}
+auto <- auto.arima(hpg_vis_ts)
+summary(auto)
+autoplot(auto)
+```
+
