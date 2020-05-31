@@ -1,0 +1,326 @@
+---
+title: "Restaurant_EDA"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE,message=FALSE,include=FALSE,results='hide'}
+# general visualisation
+library('ggplot2') # visualisation
+library('scales') # visualisation
+library('grid') # visualisation
+library('gridExtra') # visualisation
+library('RColorBrewer') # visualisation
+library('corrplot') # visualisation
+
+# general data manipulation
+library('dplyr') # data manipulation
+library("scales")
+library('readr') # input/output
+library('data.table') # data manipulation
+library('tibble') # data wrangling
+library('tidyr') # data wrangling
+library('stringr') # string manipulation
+library('forcats') # factor manipulation
+
+# specific visualisation
+library('ggrepel') # visualisation
+library('ggridges') # visualisation
+library('ggExtra') # visualisation
+library('ggforce') # visualisation
+library('viridis') # visualisation
+
+# specific data manipulation
+library('lazyeval') # data wrangling
+library('broom') # data wrangling
+library('purrr') # string manipulation
+
+# Date plus forecast
+library('lubridate') # date and time
+library('timeDate') # date and time
+library('tseries') # time series analysis
+library('forecast') # time series analysis
+library('prophet') # time series analysis
+library('timetk') # time series analysis
+
+# Maps / geospatial
+library('geosphere') # geospatial locations
+library('leaflet') # maps
+library('leaflet.extras') # maps
+library('maps') # maps
+source("http://peterhaschke.com/Code/multiplot.R")
+```
+
+
+```{r, warning=FALSE,message=FALSE}
+
+air_reserve <- read.csv("~/Desktop/MSBA/Spring 2020/Predictive/fp_dat/air_reserve.csv",header = TRUE)
+air_store <- read.csv("~/Desktop/MSBA/Spring 2020/Predictive/fp_dat/air_store_info.csv",header = TRUE)
+air_visits <- read.csv("~/Desktop/MSBA/Spring 2020/Predictive/fp_dat/air_visit_data.csv",header = TRUE)
+holidays <- read.csv("~/Desktop/MSBA/Spring 2020/Predictive/fp_dat/date_info.csv",header = TRUE)
+hpg_reserve <- read.csv("~/Desktop/MSBA/Spring 2020/Predictive/fp_dat/hpg_reserve.csv",header = TRUE)
+hpg_store <- read.csv("~/Desktop/MSBA/Spring 2020/Predictive/fp_dat/hpg_store_info.csv",header = TRUE)
+store_ids <- read.csv("~/Desktop/MSBA/Spring 2020/Predictive/fp_dat/store_id_relation.csv",header = TRUE)
+```
+
+
+# Air Visits
+
+Here we plot the total number of visitors per day over the full training time range together with the median visitors per day of the week and month of the year.
+
+Findings :
+<ul>
+  <li>
+- There is an interesting long-term step structure in the overall time series. This might be related to new restaurants being added to the data base. In addition, we already see a periodic pattern that most likely corresponds to a weekly cycle.
+
+- The number of guests per visit per restaurant per day peaks at around 20 (the orange line). The distribution extends up to 100 and, in rare cases, beyond.
+
+- Friday and the weekend appear to be the most popular days; which is to be expected. Monday and Tuesday have the lowest numbers of average visitors.
+
+- Also during the year there is a certain amount of variation. Dec appears to be the most popular month for restaurant visits. The period of Mar - May is consistently busy.</li>
+</ul>
+```{r}
+p1 <- air_visits %>%
+  group_by(visit_date) %>%
+  summarise(all_visitors = sum(visitors)) %>%
+  ggplot(aes(visit_date,all_visitors,group = 1)) +
+  geom_line() + 
+  labs(x = "All visitors", y = "Date")
+
+p2 <- air_visits %>%
+  ggplot(aes(visitors)) +
+  geom_vline(xintercept = 20, color = "orange") +
+  geom_histogram(fill = "blue", bins = 30) +
+  scale_x_log10()
+
+p3 <- air_visits %>%
+  mutate(wday = wday(visit_date, label = TRUE, week_start = 1)) %>%
+  group_by(wday) %>%
+  summarise(visits = median(visitors)) %>%
+  ggplot(aes(wday, visits, fill = wday)) +
+  geom_col() +
+  theme(legend.position = "none", axis.text.x  = element_text(angle=45, hjust=1, vjust=0.9)) +
+  labs(x = "Day of the week", y = "Median visitors") +
+  scale_fill_hue()
+  
+p4 <- air_visits %>%
+  mutate(month = month(visit_date, label = TRUE)) %>%
+  group_by(month) %>%
+  summarise(visits = median(visitors)) %>%
+  ggplot(aes(month, visits, fill = month)) +
+  geom_col() +
+  theme(legend.position = "none") +
+  labs(x = "Month", y = "Median visitors")
+
+library(ggplot2)
+layout <- matrix(c(1,1,1,1,2,3,4,4),2,4,byrow=TRUE)
+multiplot(p1, p2, p3, p4, layout=layout)
+
+```
+
+We will be forecasting for the last week of April plus May 2017, so let’s look at this time range in our 2016 training data:
+```{r}
+air_visits %>%
+  filter(visit_date > ymd("2016-04-15") & visit_date < ymd("2016-06-15")) %>%
+  group_by(visit_date) %>%
+  summarise(all_visitors = sum(visitors)) %>%
+  ggplot(aes(visit_date,all_visitors,group=1)) +
+  geom_line() +
+  geom_smooth(method = "loess", color = "blue", span = 1/7) +
+  labs(y = "All visitors", x = "Date")
+```
+
+Here, the black line is the date and the blue line corresponds to a smoothing fit with a corresponding grey confidence area. We see again the weekly period and also the impact of the aforementioned Golden Week, which in 2016 happened between Apr 29 and May 5.
+
+
+# Air Reserve
+
+Findings :
+<ul>
+  <li>
+- There were much fewer reservations made in 2016 through the air system; even none at all for a long stretch of time. The volume only increased during the end of that year. In 2017 the visitor numbers stayed strong. The artifical decline we see after the first quarter is most likely related to these reservations being at the end of the training time frame, which means that long-term reservations would not be part of this data set.
+
+- Reservations are made typically for the dinner hours in the evening.
+
+- The time, here shown in hours, between making a reservation and visiting the restaurant follow a nice 24-hour pattern. The most popular strategy is to reserve a couple of hours before the visit, but if the reservation is made more in advance then it seems to be common to book a table in the evening for one of the next evenings. This plot is truncated to show this pattern, which continues towards longer time scales. Very long time gaps between reservation and visit are not uncommon. </li>
+</ul>
+
+
+```{r}
+
+air_reserve$visit_datetime <- as.POSIXct(air_reserve$visit_datetime,tz=Sys.timezone())
+air_reserve$reserve_datetime <- as.POSIXct(air_reserve$reserve_datetime,tz=Sys.timezone())
+
+foo <- air_reserve %>%
+  mutate(reserve_date = date(reserve_datetime),
+         reserve_hour = hour(reserve_datetime),
+         reserve_wday = wday(reserve_datetime, label = TRUE, week_start = 1),
+         visit_date = date(visit_datetime),
+         visit_hour = hour(visit_datetime),
+         visit_wday = wday(visit_datetime, label = TRUE, week_start = 1),
+         diff_hour = time_length(visit_datetime - reserve_datetime, unit = "hour"),
+         diff_day = time_length(visit_datetime - reserve_datetime, unit = "day")
+         )
+
+p1 <- foo %>%
+  group_by(visit_date) %>%
+  summarise(all_visitors = sum(reserve_visitors)) %>%
+  ggplot(aes(visit_date, all_visitors)) +
+  geom_line() +
+  labs(x = "'air' visit date")
+
+p2 <- foo %>%
+  group_by(visit_hour) %>%
+  summarise(all_visitors = sum(reserve_visitors)) %>%
+  ggplot(aes(visit_hour, all_visitors)) +
+  geom_col(fill = "blue")
+
+p3 <- foo %>%
+  filter(diff_hour < 24*5) %>%
+  group_by(diff_hour) %>%
+  summarise(all_visitors = sum(reserve_visitors)) %>%
+  ggplot(aes(diff_hour, all_visitors)) +
+  geom_col(fill = "blue") +
+  labs(x = "Time from reservation to visit [hours]")
+
+layout <- matrix(c(1,1,2,3),2,2,byrow=TRUE)
+multiplot(p1, p2, p3, layout=layout)
+```
+
+
+# HPG Reserve
+
+Finding :
+<ul>
+  <li>
+- Here the visits after reservation follow a more orderly pattern, with a clear spike in Dec 2016. As above for the air data, we also see reservation visits dropping off as we get closer to the end of the time frame.
+
+- Again, most reservations are for dinner, and we see another nice 24-hour pattern for making these reservations. It’s worth noting that here the last few hours before the visit don’t see more volume than the 24 or 48 hours before. This is in stark constrast to the air data.</li>
+</ul>
+
+
+```{r}
+
+hpg_reserve$visit_datetime <- as.POSIXct(hpg_reserve$visit_datetime,tz=Sys.timezone())
+hpg_reserve$reserve_datetime <- as.POSIXct(hpg_reserve$reserve_datetime,tz=Sys.timezone())
+
+
+foo <- hpg_reserve %>%
+  mutate(reserve_date = date(reserve_datetime),
+         reserve_hour = hour(reserve_datetime),
+         visit_date = date(visit_datetime),
+         visit_hour = hour(visit_datetime),
+         diff_hour = time_length(visit_datetime - reserve_datetime, unit = "hour"),
+         diff_day = time_length(visit_datetime - reserve_datetime, unit = "day")
+         )
+
+p1 <- foo %>%
+  group_by(visit_date) %>%
+  summarise(all_visitors = sum(reserve_visitors)) %>%
+  ggplot(aes(visit_date, all_visitors)) +
+  geom_line() +
+  labs(x = "'hpg' visit date")
+
+p2 <- foo %>%
+  group_by(visit_hour) %>%
+  summarise(all_visitors = sum(reserve_visitors)) %>%
+  ggplot(aes(visit_hour, all_visitors)) +
+  geom_col(fill = "red")
+
+p3 <- foo %>%
+  filter(diff_hour < 24*5) %>%
+  group_by(diff_hour) %>%
+  summarise(all_visitors = sum(reserve_visitors)) %>%
+  ggplot(aes(diff_hour, all_visitors)) +
+  geom_col(fill = "red") +
+  labs(x = "Time from reservation to visit [hours]")
+
+layout <- matrix(c(1,1,2,3),2,2,byrow=TRUE)
+multiplot(p1, p2, p3, layout=layout)
+```
+
+
+# Air Store
+
+Finding :
+<ul>
+  <li>
+- There are lots of Izakaya gastropubs in our data, followed by Cafe’s. We don’t have many Karaoke places in the air data set and also only a few that describe themselves as generically “International” or “Asian”. I have to admit, I’m kind of intrigued by “creative cuisine”.
+
+- Fukuoka has the largest number of air restaurants per area, followed by many Tokyo areas.</li>
+</ul>
+
+```{r}
+leaflet(air_store) %>%
+  addTiles() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  addMarkers(~longitude, ~latitude,
+             popup = ~air_store_id, label = ~air_genre_name,
+             clusterOptions = markerClusterOptions())
+```
+
+```{r}
+p1 <- air_store %>%
+  group_by(air_genre_name) %>%
+  count() %>%
+  ggplot(aes(reorder(air_genre_name, n, FUN = min), n, fill = air_genre_name)) +
+  geom_col() +
+  coord_flip() +
+  theme(legend.position = "none") +
+  labs(x = "Type of cuisine (air_genre_name)", y = "Number of air restaurants")
+  
+p2 <- air_store %>%
+  group_by(air_area_name) %>%
+  count() %>%
+  ungroup() %>%
+  top_n(15,n) %>%
+  ggplot(aes(reorder(air_area_name, n, FUN = min) ,n, fill = air_area_name)) +
+  geom_col() +
+  theme(legend.position = "none") +
+  coord_flip() +
+  labs(x = "Top 15 areas (air_area_name)", y = "Number of air restaurants")
+
+layout <- matrix(c(1,2),2,1,byrow=TRUE)
+multiplot(p1, p2, layout=layout)
+```
+
+
+# HPG Store
+
+Finding : 
+<ul>
+  <li>
+- The hpg description contains a larger variety of genres than in the air data. Here, “Japanese style” appears to contain many more places that are categorised more specifically in the air data. The same applies to “International cuisine”.
+
+- In the top 15 area we find again Tokyo and Osaka to be prominently present.</li>
+</ul>
+
+```{r}
+p1 <- hpg_store %>%
+  group_by(hpg_genre_name) %>%
+  count() %>%
+  ggplot(aes(reorder(hpg_genre_name, n, FUN = min), n, fill = hpg_genre_name)) +
+  geom_col() +
+  coord_flip() +
+  theme(legend.position = "none") +
+  labs(x = "Type of cuisine (hpg_genre_name)", y = "Number of hpg restaurants")
+  
+p2 <- hpg_store %>%
+  mutate(area = str_sub(hpg_area_name, 1, 20)) %>%
+  group_by(area) %>%
+  count() %>%
+  ungroup() %>%
+  top_n(15,n) %>%
+  ggplot(aes(reorder(area, n, FUN = min) ,n, fill = area)) +
+  geom_col() +
+  theme(legend.position = "none") +
+  coord_flip() +
+  labs(x = "Top 15 areas (hpg_area_name)", y = "Number of hpg restaurants")
+
+layout <- matrix(c(1,2),1,2,byrow=TRUE)
+multiplot(p1, p2, layout=layout)
+
+```
